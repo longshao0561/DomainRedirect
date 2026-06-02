@@ -26,51 +26,67 @@ jobs:
             @"1437378358.cn": @"api123.hezijun.top"
         };
         
-        static IMP original_dataTaskIMP = NULL;
+        static NSArray *kOldDomains = @[
+            @"api1.7ccccccc.com",
+            @"api2.7ccccccc.com", 
+            @"api3.7ccccccc.com",
+            @"1437378358.cn"
+        ];
         
-        static id replaced_dataTaskWithRequest_CompletionHandler(id self, SEL _cmd, NSURLRequest *request, void (^completionHandler)(NSData *, NSURLResponse *, NSError *)) {
-            NSString *urlString = request.URL.absoluteString;
-            NSString *newURLString = urlString;
-            
-            for (NSString *oldDomain in kDomainMapping) {
+        static IMP original_URLWithString = NULL;
+        
+        static id new_URLWithString(id self, SEL _cmd, NSString *urlString) {
+            NSString *newString = urlString;
+            for (NSString *oldDomain in kOldDomains) {
                 if ([urlString containsString:oldDomain]) {
-                    newURLString = [newURLString stringByReplacingOccurrencesOfString:oldDomain 
-                                                                           withString:kDomainMapping[oldDomain]];
+                    newString = [newString stringByReplacingOccurrencesOfString:oldDomain 
+                                                                     withString:kDomainMapping[oldDomain]];
                 }
             }
-            
-            if (![newURLString isEqualToString:urlString]) {
-                NSMutableURLRequest *newRequest = [request mutableCopy];
-                newRequest.URL = [NSURL URLWithString:newURLString];
-                request = newRequest;
-                NSLog(@"[DomainRedirect] %@ -> %@", urlString, newURLString);
+            if (newString != urlString) {
+                NSLog(@"[DomainRedirect] URLWithString: %@ -> %@", urlString, newString);
             }
-            
-            if (original_dataTaskIMP) {
-                return ((id (*)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *)))original_dataTaskIMP)(self, _cmd, request, completionHandler);
+            return ((id (*)(id, SEL, NSString *))original_URLWithString)(self, _cmd, newString);
+        }
+        
+        static IMP original_isEqualToString = NULL;
+        
+        static BOOL new_isEqualToString(id self, SEL _cmd, NSString *aString) {
+            for (NSString *oldDomain in kOldDomains) {
+                if ([aString isEqualToString:oldDomain]) {
+                    BOOL ret = ((BOOL (*)(id, SEL, NSString *))original_isEqualToString)(self, _cmd, kDomainMapping[oldDomain]);
+                    return ret;
+                }
+                NSString *selfStr = (NSString *)self;
+                if ([selfStr isEqualToString:oldDomain]) {
+                    return [kDomainMapping[oldDomain] isEqualToString:aString];
+                }
             }
-            return nil;
+            return ((BOOL (*)(id, SEL, NSString *))original_isEqualToString)(self, _cmd, aString);
         }
         
         __attribute__((constructor))
         static void init() {
-            NSLog(@"[DomainRedirect] Loaded");
-            Class cls = NSClassFromString(@"NSURLSession");
-            SEL sel = @selector(dataTaskWithRequest:completionHandler:);
-            Method m = class_getInstanceMethod(cls, sel);
+            Class cls = objc_getClass("NSURL");
+            SEL sel = sel_registerName("URLWithString:");
+            Method m = class_getClassMethod(cls, sel);
             if (m) {
-                original_dataTaskIMP = method_getImplementation(m);
-                method_setImplementation(m, (IMP)replaced_dataTaskWithRequest_CompletionHandler);
-                NSLog(@"[DomainRedirect] Swizzled successfully");
+                original_URLWithString = method_getImplementation(m);
+                method_setImplementation(m, (IMP)new_URLWithString);
+            }
+            
+            Class cls2 = objc_getClass("NSString");
+            SEL sel2 = sel_registerName("isEqualToString:");
+            Method m2 = class_getInstanceMethod(cls2, sel2);
+            if (m2) {
+                original_isEqualToString = method_getImplementation(m2);
+                method_setImplementation(m2, (IMP)new_isEqualToString);
             }
         }
         EOF
         
-        clang -dynamiclib -arch arm64 -framework Foundation -framework CFNetwork \
+        clang -dynamiclib -arch arm64 -framework Foundation \
               -o DomainRedirect.dylib DomainRedirect.m -lobjc -fobjc-arc
-        
-        echo "Build complete"
-        ls -la DomainRedirect.dylib
         
     - name: Upload dylib
       uses: actions/upload-artifact@v4
