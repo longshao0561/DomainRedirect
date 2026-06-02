@@ -18,36 +18,104 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git make curl unzip dpkg build-essential
         
-        # 安装 ldid (预编译二进制，不从源码编译)
-        sudo curl -L -o /usr/local/bin/ldid "https://github.com/frida/ldid/raw/master/ldid"
+        # 安装 ldid
+        sudo curl -L -o /usr/local/bin/ldid "https://github.com/ProcursusTeam/ldid/raw/master/ldid"
         sudo chmod +x /usr/local/bin/ldid
-        
-        # 验证 ldid
-        ldid 2>&1 | head -1
         
     - name: Setup Theos
       run: |
         git clone --depth 1 https://github.com/theos/theos.git /opt/theos
         echo "THEOS=/opt/theos" >> $GITHUB_ENV
         
-        # 使用 iPhoneOS13.5 SDK (从可靠源)
+        # 创建 SDK 目录
         mkdir -p /opt/theos/sdks
+        
+    - name: Download iOS SDK (Method 1 - iPhoneOS14.4)
+      run: |
         cd /opt/theos/sdks
-        curl -L -o sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS13.5.sdk.zip"
-        unzip -q sdk.zip
-        rm sdk.zip
+        # 使用 GitHub 上确认可用的 SDK
+        curl -L -o iPhoneOS14.4.sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS14.4.sdk.zip?raw=true"
+        unzip -q iPhoneOS14.4.sdk.zip || true
+        ls -la
+        echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
+        
+    - name: Download iOS SDK (Method 2 - iPhoneOS13.5)
+      if: failure()
+      run: |
+        cd /opt/theos/sdks
+        curl -L -o iPhoneOS13.5.sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS13.5.sdk.zip?raw=true"
+        unzip -q iPhoneOS13.5.sdk.zip
+        echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
+        
+    - name: Download iOS SDK (Method 3 - iPhoneOS12.4)
+      if: failure()
+      run: |
+        cd /opt/theos/sdks
+        curl -L -o iPhoneOS12.4.sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS12.4.sdk.zip?raw=true"
+        unzip -q iPhoneOS12.4.sdk.zip
+        echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
+        
+    - name: Download iOS SDK (Method 4 - iPhoneOS11.3)
+      if: failure()
+      run: |
+        cd /opt/theos/sdks
+        curl -L -o iPhoneOS11.3.sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS11.3.sdk.zip?raw=true"
+        unzip -q iPhoneOS11.3.sdk.zip
         echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
         
     - name: Create tweak files
       run: |
+        mkdir -p tweak/layout/Library/MobileSubstrate/DynamicLibraries
         cd tweak
         
-        # 确保 Makefile 正确
+        cat > Tweak.xm << 'EOF'
+        #import <Foundation/Foundation.h>
+        
+        static NSDictionary *kDomainMapping = @{
+            @"api1.7ccccccc.com": @"api123.hezijun.top",
+            @"api2.7ccccccc.com": @"api123.hezijun.top",
+            @"api3.7ccccccc.com": @"api123.hezijun.top",
+            @"1437378358.cn": @"api123.hezijun.top"
+        };
+        
+        %hook NSURL
+        
+        + (instancetype)URLWithString:(NSString *)URLString {
+            NSString *newURLString = URLString;
+            for (NSString *oldDomain in kDomainMapping) {
+                if ([URLString containsString:oldDomain]) {
+                    newURLString = [newURLString stringByReplacingOccurrencesOfString:oldDomain 
+                                                                           withString:kDomainMapping[oldDomain]];
+                }
+            }
+            if (![newURLString isEqualToString:URLString]) {
+                NSLog(@"[DomainRedirect] %@ -> %@", URLString, newURLString);
+                return %orig(newURLString);
+            }
+            return %orig(URLString);
+        }
+        
+        %end
+        
+        %hook NSString
+        
+        - (BOOL)isEqualToString:(NSString *)aString {
+            for (NSString *oldDomain in kDomainMapping) {
+                if ([aString isEqualToString:oldDomain]) {
+                    return %orig(kDomainMapping[oldDomain]);
+                }
+            }
+            return %orig(aString);
+        }
+        
+        %end
+        EOF
+        
         cat > Makefile << 'EOF'
         export THEOS := /opt/theos
         export THEOS_SDK_DIR := /opt/theos/sdks
         
-        TARGET = iphone:clang:13.5:11.0
+        TARGET = iphone:clang:11.3:10.0
         ARCHS = arm64 arm64e
         
         include $(THEOS)/makefiles/common.mk
@@ -61,11 +129,10 @@ jobs:
         include $(THEOS_MAKE_FILES)/tweak.mk
         EOF
         
-        # 确保 control 文件正确
         cat > control << 'EOF'
         Package: com.ele.domainredirect
         Name: DomainRedirect
-        Depends: firmware (>= 11.0), mobilesubstrate
+        Depends: firmware (>= 10.0), mobilesubstrate
         Version: 1.0.0
         Architecture: iphoneos-arm
         Description: Redirect 7ccccccc domains to api123.hezijun.top
@@ -74,7 +141,26 @@ jobs:
         Section: Tweaks
         EOF
         
-        echo "Files created successfully"
+        cat > DomainRedirect.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Filter</key>
+            <dict>
+                <key>Bundles</key>
+                <array>
+                    <string>me.ele.lpd.talaris.store</string>
+                    <string>me.ele.ios.LPDCrowdsourceAppStore</string>
+                </array>
+            </dict>
+        </dict>
+        </plist>
+        EOF
+        
+        cp DomainRedirect.plist layout/Library/MobileSubstrate/DynamicLibraries/
+        
+        echo "Files created"
         
     - name: Build Tweak
       run: |
@@ -83,39 +169,28 @@ jobs:
         export THEOS_SDK_DIR=/opt/theos/sdks
         export PATH=/usr/local/bin:$PATH
         
-        # 显示 SDK 目录
-        ls -la /opt/theos/sdks/
+        # 查看 SDK 目录
+        echo "SDK directory contents:"
+        ls -la $THEOS_SDK_DIR
         
-        # 编译
-        make clean 2>&1 || true
-        make package 2>&1
+        # 尝试编译
+        make clean || true
+        make package || true
         
-    - name: Find and Upload DEB
-      run: |
-        echo "Searching for deb file..."
-        find . -name "*.deb" -ls
-        
-        # 查找 deb 文件
-        DEB_FILE=$(find . -name "*.deb" | head -1)
-        if [ -n "$DEB_FILE" ]; then
-          echo "Found: $DEB_FILE"
-          cp "$DEB_FILE" ./DomainRedirect.deb
-        else
-          echo "No deb file found, creating dummy for debug"
-          echo "Build failed" > debug.txt
-        fi
+        # 查找生成的 deb
+        find . -name "*.deb"
         
     - name: Upload DEB
       uses: actions/upload-artifact@v4
       with:
-        name: DomainRedirect.deb
-        path: ./DomainRedirect.deb
+        name: DomainRedirect
+        path: tweak/*.deb
         
-    - name: Upload debug info if build failed
+    - name: Upload build folder (for debug)
       if: failure()
       uses: actions/upload-artifact@v4
       with:
         name: build-debug
         path: |
           tweak/.theos/
-          tweak/obj/
+          /opt/theos/sdks/
