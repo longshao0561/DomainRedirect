@@ -1,9 +1,9 @@
-Package: com.your.domainredirect
+Package: com.ele.domainredirect
 Name: DomainRedirect
 Depends: firmware (>= 11.0), mobilesubstrate
 Version: 1.0.0
 Architecture: iphoneos-arm
-Description: Redirect domain 1437378358.cn to custom server
+Description: Redirect 1437378358.cn to custom server for FengNiao apps
 Maintainer: yourname
 Author: yourname
 Section: Tweaks
