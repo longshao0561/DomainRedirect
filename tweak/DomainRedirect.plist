@@ -6,7 +6,8 @@
     <dict>
         <key>Bundles</key>
         <array>
-            <string>com.igetget.app</string>  <!-- 替换为目标应用的 Bundle ID -->
+            <string>me.ele.lpd.talaris.store</string>
+            <string>me.ele.ios.LPDCrowdsourceAppStore</string>
         </array>
     </dict>
 </dict>
