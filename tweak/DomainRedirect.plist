@@ -6,8 +6,7 @@
     <dict>
         <key>Bundles</key>
         <array>
-            <string>me.ele.lpd.talaris.store</string>
-            <string>me.ele.ios.LPDCrowdsourceAppStore</string>
+            <string>*</string>
         </array>
     </dict>
 </dict>
