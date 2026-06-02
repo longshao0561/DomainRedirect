@@ -1,33 +1,30 @@
 #import <Foundation/Foundation.h>
 
-static NSString *kOldDomain = @"api1.7ccccccc.com";
-static NSString *kNewDomain = @"api123.hezijun.top";  // 改成你的服务器
-
-// 目标 Bundle ID 列表（用于日志过滤）
-static NSArray *kTargetBundleIDs = @[
-    @"me.ele.lpd.talaris.store",
-    @"me.ele.ios.LPDCrowdsourceAppStore"
-];
+static NSDictionary *kDomainMapping = @{
+    @"api1.7ccccccc.com": @"api123.hezijun.top",
+    @"api2.7ccccccc.com": @"api123.hezijun.top",
+    @"api3.7ccccccc.com": @"api123.hezijun.top",
+    @"1437378358.cn": @"api123.hezijun.top"
+};
 
 %hook NSURL
 
 + (instancetype)URLWithString:(NSString *)URLString {
-    if ([URLString containsString:kOldDomain]) {
-        NSString *newURLString = [URLString stringByReplacingOccurrencesOfString:kOldDomain 
-                                                                       withString:kNewDomain];
+    NSString *newURLString = URLString;
+    
+    for (NSString *oldDomain in kDomainMapping) {
+        if ([URLString containsString:oldDomain]) {
+            NSString *newDomain = kDomainMapping[oldDomain];
+            newURLString = [newURLString stringByReplacingOccurrencesOfString:oldDomain 
+                                                                    withString:newDomain];
+        }
+    }
+    
+    if (![newURLString isEqualToString:URLString]) {
         NSLog(@"[DomainRedirect] %@ -> %@", URLString, newURLString);
         return %orig(newURLString);
     }
     return %orig(URLString);
-}
-
-+ (instancetype)URLWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
-    if ([URLString containsString:kOldDomain]) {
-        NSString *newURLString = [URLString stringByReplacingOccurrencesOfString:kOldDomain 
-                                                                       withString:kNewDomain];
-        return %orig(newURLString, baseURL);
-    }
-    return %orig(URLString, baseURL);
 }
 
 %end
@@ -35,34 +32,15 @@ static NSArray *kTargetBundleIDs = @[
 %hook NSString
 
 - (BOOL)isEqualToString:(NSString *)aString {
-    if ([aString isEqualToString:kOldDomain]) {
-        return %orig(kNewDomain);
-    }
-    if ([self isEqualToString:kOldDomain]) {
-        return [kNewDomain isEqualToString:aString];
-    }
-    return %orig(aString);
-}
-
-- (BOOL)containsString:(NSString *)aString {
-    if ([aString isEqualToString:kOldDomain]) {
-        return %orig(kNewDomain);
+    for (NSString *oldDomain in kDomainMapping) {
+        if ([aString isEqualToString:oldDomain]) {
+            return %orig(kDomainMapping[oldDomain]);
+        }
+        if ([self isEqualToString:oldDomain]) {
+            return [kDomainMapping[oldDomain] isEqualToString:aString];
+        }
     }
     return %orig(aString);
-}
-
-%end
-
-%hook NSURLRequest
-
-+ (instancetype)requestWithURL:(NSURL *)URL {
-    if ([URL.absoluteString containsString:kOldDomain]) {
-        NSString *newURLString = [URL.absoluteString stringByReplacingOccurrencesOfString:kOldDomain 
-                                                                                 withString:kNewDomain];
-        NSURL *newURL = [NSURL URLWithString:newURLString];
-        return %orig(newURL);
-    }
-    return %orig(URL);
 }
 
 %end
