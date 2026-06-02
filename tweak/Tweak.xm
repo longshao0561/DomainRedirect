@@ -1,3 +1,4 @@
+// DomainRedirect.m - 纯 ObjC 实现，不依赖 Substrate
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
@@ -15,138 +16,66 @@ static NSArray *kOldDomains = @[
     @"1437378358.cn"
 ];
 
-static BOOL isReplacing = NO;
+static IMP original_URLWithString = NULL;
 
-// 替换字符串中的域名
-static NSString* replaceDomainInString(NSString *str) {
-    if (!str || isReplacing) return str;
-    
-    NSString *result = str;
+// 替换 NSURL URLWithString:
+static id new_URLWithString(id self, SEL _cmd, NSString *urlString) {
+    NSString *newString = urlString;
     for (NSString *oldDomain in kOldDomains) {
-        if ([result containsString:oldDomain]) {
-            result = [result stringByReplacingOccurrencesOfString:oldDomain 
-                                                       withString:kDomainMapping[oldDomain]];
+        if ([urlString containsString:oldDomain]) {
+            newString = [newString stringByReplacingOccurrencesOfString:oldDomain 
+                                                             withString:kDomainMapping[oldDomain]];
         }
     }
-    return result;
-}
-
-// Hook 1: NSString isEqualToString:
-%hook NSString
-
-- (BOOL)isEqualToString:(NSString *)aString {
-    if (!isReplacing && aString) {
-        for (NSString *oldDomain in kOldDomains) {
-            if ([aString isEqualToString:oldDomain]) {
-                isReplacing = YES;
-                BOOL ret = %orig(kDomainMapping[oldDomain]);
-                isReplacing = NO;
-                NSLog(@"[DomainRedirect] isEqual: %@ -> %@ = %d", oldDomain, kDomainMapping[oldDomain], ret);
-                return ret;
-            }
-            if ([self isEqualToString:oldDomain]) {
-                isReplacing = YES;
-                BOOL ret = [kDomainMapping[oldDomain] isEqualToString:aString];
-                isReplacing = NO;
-                NSLog(@"[DomainRedirect] isEqual: %@ -> %@ = %d", oldDomain, kDomainMapping[oldDomain], ret);
-                return ret;
-            }
-        }
-    }
-    return %orig(aString);
-}
-
-- (BOOL)containsString:(NSString *)aString {
-    if (!isReplacing && aString) {
-        for (NSString *oldDomain in kOldDomains) {
-            if ([aString isEqualToString:oldDomain]) {
-                isReplacing = YES;
-                BOOL ret = %orig(kDomainMapping[oldDomain]);
-                isReplacing = NO;
-                return ret;
-            }
-        }
-    }
-    return %orig(aString);
-}
-
-%end
-
-// Hook 2: NSURL
-%hook NSURL
-
-+ (instancetype)URLWithString:(NSString *)URLString {
-    NSString *newString = replaceDomainInString(URLString);
-    if (newString != URLString) {
-        NSLog(@"[DomainRedirect] URLWithString: %@ -> %@", URLString, newString);
-    }
-    return %orig(newString);
-}
-
-- (NSString *)absoluteString {
-    NSString *orig = %orig;
-    NSString *newString = replaceDomainInString(orig);
-    if (newString != orig) {
-        // 注意：这里不能直接修改，只是记录
-        NSLog(@"[DomainRedirect] absoluteString: %@ -> %@", orig, newString);
-    }
-    return orig;  // 返回原始值，避免递归
-}
-
-%end
-
-// Hook 3: NSURLRequest
-%hook NSURLRequest
-
-+ (instancetype)requestWithURL:(NSURL *)URL {
-    NSString *urlString = URL.absoluteString;
-    NSString *newString = replaceDomainInString(urlString);
     if (newString != urlString) {
-        NSURL *newURL = [NSURL URLWithString:newString];
-        NSLog(@"[DomainRedirect] requestWithURL: %@ -> %@", urlString, newString);
-        return %orig(newURL);
+        NSLog(@"[DomainRedirect] URLWithString: %@ -> %@", urlString, newString);
     }
-    return %orig(URL);
+    return ((id (*)(id, SEL, NSString *))original_URLWithString)(self, _cmd, newString);
 }
 
-%end
-
-// Hook 4: NSURLSession (原二进制的方法)
-static IMP original_dataTaskIMP = NULL;
-
-static id replaced_dataTaskWithRequest_CompletionHandler(id self, SEL _cmd, NSURLRequest *request, void (^completionHandler)(NSData *, NSURLResponse *, NSError *)) {
-    NSString *urlString = request.URL.absoluteString;
-    NSString *newString = replaceDomainInString(urlString);
-    
-    if (newString != urlString) {
-        NSMutableURLRequest *newRequest = [request mutableCopy];
-        newRequest.URL = [NSURL URLWithString:newString];
-        request = newRequest;
-        NSLog(@"[DomainRedirect] dataTask: %@ -> %@", urlString, newString);
-    }
-    
-    if (original_dataTaskIMP) {
-        return ((id (*)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *)))original_dataTaskIMP)(self, _cmd, request, completionHandler);
-    }
-    return nil;
-}
-
-%ctor {
-    NSLog(@"[DomainRedirect] ========== LOADED ==========");
-    NSLog(@"[DomainRedirect] Target domains: %@", kOldDomains);
-    NSLog(@"[DomainRedirect] New domain: api123.hezijun.top");
-    
-    // Hook NSURLSession
-    Class sessionClass = NSClassFromString(@"NSURLSession");
-    if (sessionClass) {
-        SEL sel = @selector(dataTaskWithRequest:completionHandler:);
-        Method m = class_getInstanceMethod(sessionClass, sel);
-        if (m) {
-            original_dataTaskIMP = method_getImplementation(m);
-            method_setImplementation(m, (IMP)replaced_dataTaskWithRequest_CompletionHandler);
-            NSLog(@"[DomainRedirect] NSURLSession hooked");
-        } else {
-            NSLog(@"[DomainRedirect] Failed to find NSURLSession method");
+// 替换 NSString isEqualToString:
+static IMP original_isEqualToString = NULL;
+static BOOL new_isEqualToString(id self, SEL _cmd, NSString *aString) {
+    for (NSString *oldDomain in kOldDomains) {
+        if ([aString isEqualToString:oldDomain]) {
+            BOOL ret = ((BOOL (*)(id, SEL, NSString *))original_isEqualToString)(self, _cmd, kDomainMapping[oldDomain]);
+            NSLog(@"[DomainRedirect] isEqual: %@ -> %@ = %d", oldDomain, kDomainMapping[oldDomain], ret);
+            return ret;
+        }
+        NSString *selfStr = (NSString *)self;
+        if ([selfStr isEqualToString:oldDomain]) {
+            BOOL ret = [kDomainMapping[oldDomain] isEqualToString:aString];
+            NSLog(@"[DomainRedirect] isEqual(self): %@ -> %@ = %d", oldDomain, kDomainMapping[oldDomain], ret);
+            return ret;
         }
     }
+    return ((BOOL (*)(id, SEL, NSString *))original_isEqualToString)(self, _cmd, aString);
+}
+
+// 构造函数，在 dylib 加载时自动执行
+__attribute__((constructor))
+static void init() {
+    NSLog(@"[DomainRedirect] ========== INITIALIZED ==========");
+    
+    // Hook NSURL URLWithString:
+    Class NSURLClass = objc_getClass("NSURL");
+    SEL URLWithStringSel = sel_registerName("URLWithString:");
+    Method URLWithStringMethod = class_getClassMethod(NSURLClass, URLWithStringSel);
+    if (URLWithStringMethod) {
+        original_URLWithString = method_getImplementation(URLWithStringMethod);
+        method_setImplementation(URLWithStringMethod, (IMP)new_URLWithString);
+        NSLog(@"[DomainRedirect] Hooked NSURL URLWithString:");
+    }
+    
+    // Hook NSString isEqualToString:
+    Class NSStringClass = objc_getClass("NSString");
+    SEL isEqualSel = sel_registerName("isEqualToString:");
+    Method isEqualMethod = class_getInstanceMethod(NSStringClass, isEqualSel);
+    if (isEqualMethod) {
+        original_isEqualToString = method_getImplementation(isEqualMethod);
+        method_setImplementation(isEqualMethod, (IMP)new_isEqualToString);
+        NSLog(@"[DomainRedirect] Hooked NSString isEqualToString:");
+    }
+    
+    NSLog(@"[DomainRedirect] Ready to redirect domains: %@", kOldDomains);
 }
