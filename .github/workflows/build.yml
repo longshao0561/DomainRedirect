@@ -1,0 +1,51 @@
+name: Build Theos Tweak
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git make curl unzip ldid git
+        
+        # 下载预编译的 Theos 工具链
+        mkdir -p /opt/theos
+        cd /opt/theos
+        
+        # 克隆 Theos
+        git clone https://github.com/theos/theos.git .
+        
+        # 下载 iOS SDK
+        mkdir -p sdks
+        cd sdks
+        curl -L -o iPhoneOS14.5.sdk.zip "https://github.com/theos/sdks/raw/master/iPhoneOS14.5.sdk.zip"
+        unzip -q iPhoneOS14.5.sdk.zip
+        rm iPhoneOS14.5.sdk.zip
+        
+        # 设置环境变量
+        echo "THEOS=/opt/theos" >> $GITHUB_ENV
+        echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
+        
+    - name: Build tweak
+      run: |
+        cd tweak
+        export THEOS=/opt/theos
+        export THEOS_SDK_DIR=/opt/theos/sdks
+        make clean
+        make package
+        
+    - name: Upload deb package
+      uses: actions/upload-artifact@v4
+      with:
+        name: DomainRedirect.deb
+        path: tweak/*.deb
