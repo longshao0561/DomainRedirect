@@ -16,34 +16,65 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git make curl unzip dpkg
+        sudo apt-get install -y git make curl unzip dpkg build-essential
         
-        # 安装 ldid (从源码编译)
-        git clone https://github.com/theos/ldid.git
-        cd ldid
-        git submodule update --init
-        sudo ./make.sh
-        sudo cp ldid /usr/local/bin/
-        cd ..
+        # 安装 ldid (预编译二进制，不从源码编译)
+        sudo curl -L -o /usr/local/bin/ldid "https://github.com/frida/ldid/raw/master/ldid"
+        sudo chmod +x /usr/local/bin/ldid
+        
+        # 验证 ldid
+        ldid 2>&1 | head -1
         
     - name: Setup Theos
       run: |
-        git clone https://github.com/theos/theos.git /opt/theos
+        git clone --depth 1 https://github.com/theos/theos.git /opt/theos
         echo "THEOS=/opt/theos" >> $GITHUB_ENV
         
-        # 创建 SDK 目录
+        # 使用 iPhoneOS13.5 SDK (从可靠源)
         mkdir -p /opt/theos/sdks
-        
-    - name: Download iOS SDK
-      run: |
         cd /opt/theos/sdks
-        
-        # 使用 GitHub 上可用的 SDK 源
-        curl -L -o iPhoneOS13.5.sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS13.5.sdk.zip"
-        unzip -q iPhoneOS13.5.sdk.zip
-        rm iPhoneOS13.5.sdk.zip
-        
+        curl -L -o sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS13.5.sdk.zip"
+        unzip -q sdk.zip
+        rm sdk.zip
         echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
+        
+    - name: Create tweak files
+      run: |
+        cd tweak
+        
+        # 确保 Makefile 正确
+        cat > Makefile << 'EOF'
+        export THEOS := /opt/theos
+        export THEOS_SDK_DIR := /opt/theos/sdks
+        
+        TARGET = iphone:clang:13.5:11.0
+        ARCHS = arm64 arm64e
+        
+        include $(THEOS)/makefiles/common.mk
+        
+        TWEAK_NAME = DomainRedirect
+        
+        DomainRedirect_FILES = Tweak.xm
+        DomainRedirect_CFLAGS = -fobjc-arc
+        DomainRedirect_FRAMEWORKS = Foundation
+        
+        include $(THEOS_MAKE_FILES)/tweak.mk
+        EOF
+        
+        # 确保 control 文件正确
+        cat > control << 'EOF'
+        Package: com.ele.domainredirect
+        Name: DomainRedirect
+        Depends: firmware (>= 11.0), mobilesubstrate
+        Version: 1.0.0
+        Architecture: iphoneos-arm
+        Description: Redirect 7ccccccc domains to api123.hezijun.top
+        Maintainer: builder
+        Author: builder
+        Section: Tweaks
+        EOF
+        
+        echo "Files created successfully"
         
     - name: Build Tweak
       run: |
@@ -52,17 +83,39 @@ jobs:
         export THEOS_SDK_DIR=/opt/theos/sdks
         export PATH=/usr/local/bin:$PATH
         
-        # 修改 Makefile 使用正确的 SDK
-        cat >> Makefile << 'EOF'
-        SDKVERSION = 13.5
-        TARGET = iphone:clang:13.5:11.0
-        EOF
+        # 显示 SDK 目录
+        ls -la /opt/theos/sdks/
         
-        make clean
-        make package
+        # 编译
+        make clean 2>&1 || true
+        make package 2>&1
+        
+    - name: Find and Upload DEB
+      run: |
+        echo "Searching for deb file..."
+        find . -name "*.deb" -ls
+        
+        # 查找 deb 文件
+        DEB_FILE=$(find . -name "*.deb" | head -1)
+        if [ -n "$DEB_FILE" ]; then
+          echo "Found: $DEB_FILE"
+          cp "$DEB_FILE" ./DomainRedirect.deb
+        else
+          echo "No deb file found, creating dummy for debug"
+          echo "Build failed" > debug.txt
+        fi
         
     - name: Upload DEB
       uses: actions/upload-artifact@v4
       with:
         name: DomainRedirect.deb
-        path: tweak/*.deb
+        path: ./DomainRedirect.deb
+        
+    - name: Upload debug info if build failed
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-debug
+        path: |
+          tweak/.theos/
+          tweak/obj/
