@@ -15,7 +15,6 @@ jobs:
     
     - name: Build dylib
       run: |
-        # 创建源文件
         cat > DomainRedirect.m << 'EOF'
         #import <Foundation/Foundation.h>
         #import <objc/runtime.h>
@@ -27,36 +26,48 @@ jobs:
             @"1437378358.cn": @"api123.hezijun.top"
         };
         
-        static void (*orig_URLWithString)(id self, SEL _cmd, NSString *url);
+        static IMP original_dataTaskIMP = NULL;
         
-        static id new_URLWithString(id self, SEL _cmd, NSString *urlString) {
+        static id replaced_dataTaskWithRequest_CompletionHandler(id self, SEL _cmd, NSURLRequest *request, void (^completionHandler)(NSData *, NSURLResponse *, NSError *)) {
+            NSString *urlString = request.URL.absoluteString;
             NSString *newURLString = urlString;
+            
             for (NSString *oldDomain in kDomainMapping) {
                 if ([urlString containsString:oldDomain]) {
                     newURLString = [newURLString stringByReplacingOccurrencesOfString:oldDomain 
                                                                            withString:kDomainMapping[oldDomain]];
                 }
             }
+            
             if (![newURLString isEqualToString:urlString]) {
+                NSMutableURLRequest *newRequest = [request mutableCopy];
+                newRequest.URL = [NSURL URLWithString:newURLString];
+                request = newRequest;
                 NSLog(@"[DomainRedirect] %@ -> %@", urlString, newURLString);
             }
-            return ((id (*)(id, SEL, NSString *))orig_URLWithString)(self, _cmd, newURLString);
+            
+            if (original_dataTaskIMP) {
+                return ((id (*)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *)))original_dataTaskIMP)(self, _cmd, request, completionHandler);
+            }
+            return nil;
         }
         
         __attribute__((constructor))
         static void init() {
-            NSLog(@"[DomainRedirect] Loaded - redirecting 7ccccccc domains to api123.hezijun.top");
-            Class NSURLClass = NSClassFromString(@"NSURL");
-            Method m = class_getClassMethod(NSURLClass, @selector(URLWithString:));
-            orig_URLWithString = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)new_URLWithString);
+            NSLog(@"[DomainRedirect] Loaded");
+            Class cls = NSClassFromString(@"NSURLSession");
+            SEL sel = @selector(dataTaskWithRequest:completionHandler:);
+            Method m = class_getInstanceMethod(cls, sel);
+            if (m) {
+                original_dataTaskIMP = method_getImplementation(m);
+                method_setImplementation(m, (IMP)replaced_dataTaskWithRequest_CompletionHandler);
+                NSLog(@"[DomainRedirect] Swizzled successfully");
+            }
         }
         EOF
         
-        # 编译为 dylib
-        clang -dynamiclib -arch arm64 -framework Foundation \
-              -o DomainRedirect.dylib DomainRedirect.m \
-              -lobjc -fobjc-arc
+        clang -dynamiclib -arch arm64 -framework Foundation -framework CFNetwork \
+              -o DomainRedirect.dylib DomainRedirect.m -lobjc -fobjc-arc
         
         echo "Build complete"
         ls -la DomainRedirect.dylib
