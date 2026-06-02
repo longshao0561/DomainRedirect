@@ -13,29 +13,36 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Setup Theos
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git make curl unzip
+        sudo apt-get install -y git make curl unzip dpkg
         
-        # 手动下载 ldid
-        sudo curl -L -o /usr/local/bin/ldid "https://raw.githubusercontent.com/theos/ldid/master/ldid"
-        sudo chmod +x /usr/local/bin/ldid
+        # 安装 ldid (从源码编译)
+        git clone https://github.com/theos/ldid.git
+        cd ldid
+        git submodule update --init
+        sudo ./make.sh
+        sudo cp ldid /usr/local/bin/
+        cd ..
         
-        # 安装 dpkg 用于打包
-        sudo apt-get install -y dpkg
-        
-        mkdir -p /opt/theos
-        cd /opt/theos
-        git clone https://github.com/theos/theos.git .
-        
-        mkdir -p sdks
-        cd sdks
-        curl -L -o iPhoneOS14.5.sdk.zip "https://github.com/theos/sdks/raw/master/iPhoneOS14.5.sdk.zip"
-        unzip -q iPhoneOS14.5.sdk.zip
-        rm iPhoneOS14.5.sdk.zip
-        
+    - name: Setup Theos
+      run: |
+        git clone https://github.com/theos/theos.git /opt/theos
         echo "THEOS=/opt/theos" >> $GITHUB_ENV
+        
+        # 创建 SDK 目录
+        mkdir -p /opt/theos/sdks
+        
+    - name: Download iOS SDK
+      run: |
+        cd /opt/theos/sdks
+        
+        # 使用 GitHub 上可用的 SDK 源
+        curl -L -o iPhoneOS13.5.sdk.zip "https://github.com/xybp888/iOS-SDKs/raw/master/iPhoneOS13.5.sdk.zip"
+        unzip -q iPhoneOS13.5.sdk.zip
+        rm iPhoneOS13.5.sdk.zip
+        
         echo "THEOS_SDK_DIR=/opt/theos/sdks" >> $GITHUB_ENV
         
     - name: Build Tweak
@@ -44,6 +51,13 @@ jobs:
         export THEOS=/opt/theos
         export THEOS_SDK_DIR=/opt/theos/sdks
         export PATH=/usr/local/bin:$PATH
+        
+        # 修改 Makefile 使用正确的 SDK
+        cat >> Makefile << 'EOF'
+        SDKVERSION = 13.5
+        TARGET = iphone:clang:13.5:11.0
+        EOF
+        
         make clean
         make package
         
