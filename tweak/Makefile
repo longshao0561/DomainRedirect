@@ -11,6 +11,5 @@ TWEAK_NAME = DomainRedirect
 DomainRedirect_FILES = Tweak.xm
 DomainRedirect_CFLAGS = -fobjc-arc
 DomainRedirect_FRAMEWORKS = Foundation
-DomainRedirect_PRIVATE_FRAMEWORKS = 
 
 include $(THEOS_MAKE_FILES)/tweak.mk
