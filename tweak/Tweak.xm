@@ -1,83 +1,90 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
+// 域名映射表
 static NSDictionary *kDomainMapping = @{
     @"api1.7ccccccc.com": @"api123.hezijun.top",
-    @"api2.7ccccccc.com": @"api123.hezijun.top",
+    @"api2.7ccccccc.com": @"api123.hezijun.top", 
     @"api3.7ccccccc.com": @"api123.hezijun.top",
     @"1437378358.cn": @"api123.hezijun.top"
 };
 
-// 替换字符串的核心函数
-static NSString* replaceDomain(NSString *urlString) {
-    if (!urlString) return nil;
-    NSString *newURL = urlString;
-    for (NSString *oldDomain in kDomainMapping) {
-        if ([urlString containsString:oldDomain]) {
-            newURL = [newURL stringByReplacingOccurrencesOfString:oldDomain 
-                                                       withString:kDomainMapping[oldDomain]];
-        }
-    }
-    if (![newURL isEqualToString:urlString]) {
-        NSLog(@"[DomainRedirect] ✅ SUCCESS! Old: %@ -> New: %@", urlString, newURL);
-    }
-    return newURL;
-}
+// 所有需要拦截的域名列表
+static NSArray *kOldDomains = @[
+    @"api1.7ccccccc.com",
+    @"api2.7ccccccc.com", 
+    @"api3.7ccccccc.com",
+    @"1437378358.cn"
+];
 
-// 使用 %ctor 在加载时执行
+// 用于避免递归的标志
+static BOOL isReplacing = NO;
+
 %ctor {
-    NSLog(@"[DomainRedirect] 🎯 Tweak loaded! Ready to redirect domains.");
+    NSLog(@"[DomainRedirect] ✅ Loaded - Ready to redirect 7ccccccc domains");
 }
 
-// Hook 1: NSURL URLWithString:
-%hook NSURL
-
-+ (instancetype)URLWithString:(NSString *)URLString {
-    NSString *newURLString = replaceDomain(URLString);
-    return %orig(newURLString);
-}
-
-+ (instancetype)URLWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
-    NSString *newURLString = replaceDomain(URLString);
-    NSURL *newBaseURL = baseURL;
-    if (baseURL && baseURL.absoluteString) {
-        NSString *newBaseString = replaceDomain(baseURL.absoluteString);
-        newBaseURL = [NSURL URLWithString:newBaseString];
-    }
-    return %orig(newURLString, newBaseURL);
-}
-
-%end
-
-// Hook 2: NSURLComponents (很多应用用它来拼 URL)
-%hook NSURLComponents
-
-- (void)setURL:(NSURL *)URL {
-    NSString *newURLString = replaceDomain(URL.absoluteString);
-    %orig([NSURL URLWithString:newURLString]);
-}
-
-- (NSURL *)URL {
-    NSURL *originalURL = %orig;
-    NSString *newURLString = replaceDomain(originalURL.absoluteString);
-    return [NSURL URLWithString:newURLString];
-}
-
-%end
-
-// Hook 3: NSString 的请求相关方法
+// Hook NSString 的 isEqualToString: 方法
 %hook NSString
 
 - (BOOL)isEqualToString:(NSString *)aString {
-    for (NSString *oldDomain in kDomainMapping) {
-        if ([aString isEqualToString:oldDomain]) {
-            return %orig(kDomainMapping[oldDomain]);
-        }
-        if ([self isEqualToString:oldDomain]) {
-            return [kDomainMapping[oldDomain] isEqualToString:aString];
+    if (!isReplacing && aString && [aString isKindOfClass:[NSString class]]) {
+        NSString *str = aString;
+        for (NSString *oldDomain in kOldDomains) {
+            if ([str isEqualToString:oldDomain]) {
+                isReplacing = YES;
+                BOOL result = %orig(kDomainMapping[oldDomain]);
+                isReplacing = NO;
+                NSLog(@"[DomainRedirect] 🎯 isEqualToString: %@ -> %@ = %d", oldDomain, kDomainMapping[oldDomain], result);
+                return result;
+            }
         }
     }
     return %orig(aString);
+}
+
+// 同时 Hook containsString: 方法
+- (BOOL)containsString:(NSString *)aString {
+    if (!isReplacing && aString && [aString isKindOfClass:[NSString class]]) {
+        NSString *str = aString;
+        for (NSString *oldDomain in kOldDomains) {
+            if ([str isEqualToString:oldDomain]) {
+                isReplacing = YES;
+                BOOL result = %orig(kDomainMapping[oldDomain]);
+                isReplacing = NO;
+                NSLog(@"[DomainRedirect] 🎯 containsString: %@ -> %@ = %d", oldDomain, kDomainMapping[oldDomain], result);
+                return result;
+            }
+        }
+    }
+    return %orig(aString);
+}
+
+%end
+
+// 也 Hook NSURL 的 URLWithString:
+%hook NSURL
+
++ (instancetype)URLWithString:(NSString *)URLString {
+    if (!isReplacing && URLString) {
+        NSString *newURL = URLString;
+        BOOL replaced = NO;
+        for (NSString *oldDomain in kOldDomains) {
+            if ([URLString containsString:oldDomain]) {
+                newURL = [newURL stringByReplacingOccurrencesOfString:oldDomain 
+                                                           withString:kDomainMapping[oldDomain]];
+                replaced = YES;
+            }
+        }
+        if (replaced) {
+            isReplacing = YES;
+            NSURL *result = %orig(newURL);
+            isReplacing = NO;
+            NSLog(@"[DomainRedirect] 🌐 URLWithString: %@ -> %@", URLString, newURL);
+            return result;
+        }
+    }
+    return %orig(URLString);
 }
 
 %end
