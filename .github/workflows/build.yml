@@ -16,7 +16,14 @@ jobs:
     - name: Setup Theos
       run: |
         sudo apt-get update
-        sudo apt-get install -y git make curl unzip ldid
+        sudo apt-get install -y git make curl unzip
+        
+        # 手动下载 ldid
+        sudo curl -L -o /usr/local/bin/ldid "https://raw.githubusercontent.com/theos/ldid/master/ldid"
+        sudo chmod +x /usr/local/bin/ldid
+        
+        # 安装 dpkg 用于打包
+        sudo apt-get install -y dpkg
         
         mkdir -p /opt/theos
         cd /opt/theos
@@ -36,6 +43,7 @@ jobs:
         cd tweak
         export THEOS=/opt/theos
         export THEOS_SDK_DIR=/opt/theos/sdks
+        export PATH=/usr/local/bin:$PATH
         make clean
         make package
         
